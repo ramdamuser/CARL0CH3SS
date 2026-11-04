@@ -75,3 +75,114 @@ for (const assignedColor of ['w', 'b']) {
     });
   }
 }
+
+test('matchmaking separates increments and publishes the exact custom time control', { timeout: 10000 }, async t => {
+  const server = createChessServer(); server.http.listen(0, '127.0.0.1'); await once(server.http, 'listening');
+  const clients = [];
+  t.after(() => { clients.forEach(s => s.disconnect()); server.stop(); });
+  const connect = async () => {
+    const s = io(`http://127.0.0.1:${server.http.address().port}`, { forceNew: true });
+    clients.push(s); await once(s, 'connect'); return s;
+  };
+  const a = await connect(), b = await connect(), c = await connect();
+  await request(a, 'quick', { minutes: 5, increment: 0 });
+  await request(b, 'quick', { minutes: 5, increment: 5 });
+  assert.equal(server.games.size, 0);
+  const paired = once(b, 'seated');
+  let latest; b.on('state', state => { latest = state; });
+  await request(c, 'quick', { minutes: 5, increment: 5 });
+  await paired;
+  assert.equal(server.games.size, 1);
+  assert.equal(latest.minutes, 5); assert.equal(latest.increment, 5);
+  assert.equal((await request(a, 'create', { minutes: .5, increment: 3 })).ok, true);
+  const custom = [...server.games.values()].find(g => g.minutes === .5);
+  assert.equal(custom.increment, 3);
+  assert.equal(custom.remaining.w, 30000);
+});
+
+test('invalid requested time controls are rejected instead of silently becoming five minutes', { timeout: 10000 }, async t => {
+  const server = createChessServer(); server.http.listen(0, '127.0.0.1'); await once(server.http, 'listening');
+  const client = io(`http://127.0.0.1:${server.http.address().port}`, { forceNew: true });
+  t.after(() => { client.disconnect(); server.stop(); }); await once(client, 'connect');
+  for (const event of ['quick', 'create']) {
+    assert.match((await request(client, event, { minutes: 0, increment: 0 })).error, /minutes/);
+    assert.match((await request(client, event, { minutes: 5, increment: -1 })).error, /increment/);
+  }
+  assert.equal(server.games.size, 0);
+});
+
+for (const firstColor of ['random', 'w', 'b']) {
+  for (const secondColor of ['random', 'w', 'b']) {
+    test(`color compatibility: ${firstColor} queued before ${secondColor}`, { timeout: 10000 }, async t => {
+      const server = createChessServer(); server.http.listen(0, '127.0.0.1'); await once(server.http, 'listening');
+      const clients = [];
+      t.after(() => { clients.forEach(s => s.disconnect()); server.stop(); });
+      const connect = async () => {
+        const s = io(`http://127.0.0.1:${server.http.address().port}`, { forceNew: true }); clients.push(s);
+        await once(s, 'connect'); return s;
+      };
+      const a = await connect(), b = await connect();
+      await request(a, 'quick', { name: 'First', minutes: 5, color: firstColor });
+      await request(b, 'quick', { name: 'Second', minutes: 5, color: secondColor });
+      const compatible = firstColor === 'random' ? secondColor === 'random' : secondColor !== 'random' && firstColor !== secondColor;
+      assert.equal(server.games.size, compatible ? 1 : 0);
+      if (compatible) {
+        const game = [...server.games.values()][0];
+        if (firstColor !== 'random') {
+          assert.equal(game.players[firstColor].name, 'First');
+          assert.equal(game.players[secondColor].name, 'Second');
+        } else assert.deepEqual(Object.keys(game.players).sort(), ['b', 'w']);
+      }
+    });
+  }
+}
+
+test('same-color queue preserves FIFO players and cancellation removes only its own entry', { timeout: 10000 }, async t => {
+  const server = createChessServer(); server.http.listen(0, '127.0.0.1'); await once(server.http, 'listening');
+  const clients = [];
+  t.after(() => { clients.forEach(s => s.disconnect()); server.stop(); });
+  const connect = async () => {
+    const s = io(`http://127.0.0.1:${server.http.address().port}`, { forceNew: true }); clients.push(s);
+    await once(s, 'connect'); return s;
+  };
+  const a = await connect(), b = await connect(), c = await connect(), d = await connect(), e = await connect();
+  await request(a, 'quick', { name: 'First', color: 'b' });
+  await request(b, 'quick', { name: 'Cancelled', color: 'b' });
+  await request(c, 'quick', { name: 'Third', color: 'b' });
+  assert.equal(server.games.size, 0);
+  await request(b, 'cancelQueue');
+  await request(d, 'quick', { name: 'White one', color: 'w' });
+  await request(e, 'quick', { name: 'White two', color: 'w' });
+  const games = [...server.games.values()];
+  assert.equal(games.length, 2);
+  assert.equal(games[0].players.b.name, 'First');
+  assert.equal(games[1].players.b.name, 'Third');
+  assert.equal(games[0].players.w.name, 'White one');
+  assert.equal(games[1].players.w.name, 'White two');
+});
+
+test('private premove queue executes automatically, cancels, and clears on disconnect', { timeout: 10000 }, async t => {
+  const server = createChessServer(); server.http.listen(0, '127.0.0.1'); await once(server.http, 'listening');
+  const clients = [];
+  t.after(() => { clients.forEach(s => s.disconnect()); server.stop(); });
+  const connect = async () => {
+    const s = io(`http://127.0.0.1:${server.http.address().port}`, { forceNew: true }); clients.push(s);
+    await once(s, 'connect'); return s;
+  };
+  const a = await connect(), b = await connect();
+  let whiteState, blackState;
+  a.on('state', s => { whiteState = s; }); b.on('state', s => { blackState = s; });
+  const seated = once(a, 'seated'); await request(a, 'create', { color: 'w' });
+  const [seat] = await seated; await request(b, 'join', { id: seat.id });
+  await request(b, 'premove', { from: 'e7', to: 'e5', ply: 0 });
+  await request(b, 'premove', { from: 'g8', to: 'f6', ply: 0 });
+  await pause();
+  assert.equal(whiteState.premoves.length, 0); assert.equal(blackState.premoves.length, 2);
+  await request(a, 'move', { from: 'e2', to: 'e4' });
+  const g = server.games.get(seat.id);
+  assert.deepEqual(g.chess.history(), ['e4', 'e5']); assert.equal(g.remaining.b, 299900);
+  assert.equal(g.premoves.b.length, 1);
+  await request(b, 'cancelPremoves'); assert.equal(g.premoves.b.length, 0);
+  await request(b, 'premove', { from: 'g8', to: 'f6', ply: 2 });
+  b.disconnect(); await pause(); assert.equal(g.premoves.b.length, 0);
+});

@@ -35,3 +35,25 @@ test('castling, en passant, promotion and fifty-move draw', () => {
   g.chess = new Chess('4k3/8/8/8/8/8/8/R3K3 w - - 99 1');
   move(g,'w',{from:'a1',to:'a2'},5000); assert.equal(g.result,'Draw by the 50-move rule');
 });
+
+test('increment is awarded once to the mover after a legal move, never on invalid moves or timeout', () => {
+  const g = createGame(.5, 2); g.lastTick = 1000;
+  move(g, 'w', { from: 'e2', to: 'e4' }, 2000);
+  assert.equal(g.remaining.w, 31000);
+  assert.equal(g.remaining.b, 30000);
+  assert.equal(snapshot(g).increment, 2);
+  assert.throws(() => move(g, 'b', { from: 'e7', to: 'e4' }, 3000));
+  assert.equal(g.remaining.b, 29000);
+  move(g, 'b', { from: 'e7', to: 'e5' }, 4000);
+  assert.equal(g.remaining.b, 30000);
+  assert.throws(() => move(g, 'w', { from: 'd2', to: 'd4' }, 35000));
+  assert.equal(g.remaining.w, 0);
+  assert.equal(g.result, 'Black wins on time');
+});
+
+test('custom time controls validate boundaries and reject malformed values', () => {
+  assert.equal(createGame(.5, 0).remaining.w, 30000);
+  assert.equal(createGame(180, 60).remaining.b, 10800000);
+  for (const minutes of [0, -.5, 181, .75, NaN, Infinity, '5', null]) assert.throws(() => createGame(minutes, 0));
+  for (const increment of [-1, 61, .5, NaN, Infinity, '2', null]) assert.throws(() => createGame(5, increment));
+});

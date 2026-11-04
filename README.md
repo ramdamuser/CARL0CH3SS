@@ -45,8 +45,8 @@ carl0ch3ss/
 
 ## Playing
 
-- Enter a guest name and choose 3-, 5-, or 10-minute time control.
-- **Find an opponent** queues you against another connected player with the same time control. Colors are randomly assigned when a match is found.
+- Enter a guest name and choose a Bullet, Blitz, Rapid, or Classical preset, or a custom time control.
+- **Find an opponent** queues you against another connected player with the same starting time and increment. Random matches only Random, with colors randomly assigned. White matches only Black, and each player receives their requested color. Players with the same preference wait in arrival order.
 - **Create a private room** assigns the selected or random color. Copy the invite link or share the eight-character room code. Clocks begin when both players join.
 - Click a piece to reveal legal moves, then click a destination; desktop drag-and-drop also works. Promotion opens a queen/rook/bishop/knight selector.
 - Flip the board, follow SAN move history, offer/accept a draw, or resign. Check, checkmate, stalemate, insufficient material, repetition, and fifty-move draws are detected.
@@ -59,17 +59,19 @@ Client requests accept an acknowledgement `{ ok: true }` or `{ error: string }`.
 
 | Client event | Payload | Behavior |
 |---|---|---|
-| `create` | `{ name, minutes, color: 'w' / 'b' / 'random' }` | Creates and seats host |
+| `create` | `{ name, minutes, increment, color: 'w' / 'b' / 'random' }` | Creates and seats host |
 | `join` | `{ id, name }` | Takes remaining seat |
-| `quick` | `{ name, minutes }` | Joins matching time-control queue |
+| `quick` | `{ name, minutes, increment, color }` | Joins matching time-control and compatible-color queue |
 | `cancelQueue` | `{}` | Leaves matchmaking |
 | `resume` | `{ id, token }` | Reclaims own seat with a secret token |
 | `move` | `{ from, to, promotion? }` | Validates seat, turn, clock and move |
+| `premove` | `{ from, to, promotion?, ply }` | Appends a premove while it is the opponent’s turn |
+| `cancelPremoves` | `{}` | Clears only the requesting player’s premove queue |
 | `draw` | `{}` | Offers draw or accepts opponent's offer |
 | `resign` | `{}` | Ends game or closes waiting room |
 | `leave` | `{}` | Leaves completed room |
 
-Server events: `seated` sends `{ id, color, token }` privately; `state` broadcasts FEN, SAN history, last move, turn/check status, public player info, remaining clock times, result and draw offer. `queued` confirms matchmaking; `notice` reports unsolicited errors. Tokens are never included in public state. The backend refreshes live clocks every 250ms and accounts for elapsed wall time before every move.
+Server events: `seated` sends `{ id, color, token }` privately; `state` broadcasts FEN, SAN history, last move, turn/check status, public player info, remaining clock times, result, draw offer and the receiving player’s private premove queue. `queued` confirms matchmaking; `notice` reports unsolicited errors. Tokens are never included in public state. The backend refreshes live clocks every 250ms and accounts for elapsed wall time before every move.
 
 ## Scope and rules policy
 
@@ -86,3 +88,34 @@ Realtime room reference: https://socket.io/docs/v4/rooms/
 
 Downloaded CC0 recordings play for legal moves and captures in local and multiplayer games. Check uses two taps; game end uses three. The speaker button in the header mutes all game audio and remembers the preference. Audio unlocks after a pointer or keyboard interaction, as required by browsers. Reconnects, initial positions, and clock updates do not replay moves. Files are served locally from `public/sounds/`; no third-party audio requests occur during play. See [sound credits](public/sounds/CREDITS.md) for original creators, source links, and licenses.
 # CARL0CH3SS
+
+
+## Expanded time controls
+
+| Category | Presets (minutes + increment seconds) |
+| --- | --- |
+| Bullet | 1+0, 1+1, 2+1 |
+| Blitz | 3+0, 3+2, 5+0, 5+5 |
+| Rapid | 10+0, 10+5, 15+10, 30+0 |
+| Classical | 60+0, 60+30, 90+30 |
+
+Custom games allow 0.5–180 starting minutes in half-minute steps and 0–60 whole seconds of increment. For example, 3+2 gives each player three minutes, adding two seconds to their clock after each legal move. Increment is never awarded after a flag has fallen. The server validates both settings and matches only identical controls, including custom controls. Missing settings default to 5+0 for older clients; invalid values are rejected.
+
+The app labels categories using starting time plus 40 increments: under 3 minutes is Bullet, under 10 Blitz, under 60 Rapid, and otherwise Classical. These are app labels rather than tournament rule classifications. Local practice remains untimed. Active long games are retained until completion even when both players are disconnected.
+
+
+## Multiple premoves and clock precision
+
+During an online opponent’s turn, click or drag your pieces to plan up to 20 successive premoves. The board previews your planned positions, highlights their squares, and lists the sequence beneath the board. Choose a promotion piece when planning a pawn promotion. Click **Clear premoves** or right-click the board to cancel the entire queue.
+
+The server stores the queue privately and executes its next move immediately after the opponent moves, only if chess.js confirms it is legal. Each executed premove deducts exactly **100ms (0.1 seconds)** before the normal increment is awarded. With 100ms or less left, the player flags before the move executes; increment cannot rescue them. An illegal premove clears the remaining sequence without a premove charge. Game end and disconnection also clear the affected queues. Normal moves still consume elapsed server time, and the client cannot mark a normal move as a premove to bypass the clock.
+
+Planning permits piece-shaped moves through currently blocked paths, since the future position is unknown. Execution always uses full legal validation, including checks, castling, and en passant. Local practice does not queue premoves because one person controls both sides.
+
+Clocks display `m:ss` at 20 seconds or above and `0:ss.s` below 20 seconds. The browser interpolates the active clock every 50ms between server snapshots; the server remains authoritative for flagging and game outcomes.
+
+## Reviewing previous moves
+
+Use the buttons beneath the board to go to the starting position, step backward/forward one ply (one player's move), or return to **Live board / Latest**. Click any White or Black move in the history to see the position immediately after that move. The selected notation, last-move squares, side to move, and check highlight follow the reviewed position. This also works in local practice and after game end.
+
+Review is read-only: moving pieces and adding premoves are disabled until you return to the latest position. Online clocks, incoming moves, and previously queued premoves continue normally. New moves do not change the historical position you are inspecting. The displayed clocks always represent the live game, not historical clock times. Starting a new game or resetting practice returns to the latest board.

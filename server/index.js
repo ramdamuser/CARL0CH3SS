@@ -1,9 +1,10 @@
 import express from 'express';
+import { validateTimeControl, timeControlKey } from '../shared/time-controls.js';
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { randomBytes, randomInt } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { createGame, move, tick, snapshot, other, colorName } from './game.js';
+import { createGame, move, tick, snapshot, other, colorName, queuePremove, runPremoves } from './game.js';
 
 export function createChessServer({ chooseColor = () => randomInt(2) === 0 ? 'w' : 'b' } = {}) {
   const app = express();
@@ -11,8 +12,14 @@ export function createChessServer({ chooseColor = () => randomInt(2) === 0 ? 'w'
   const io = new Server(http, { cors: { origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173' }, maxHttpBufferSize: 4096 });
   const games = new Map();
   const queue = new Map();
-  const broadcast = g => io.to(g.id).emit('state', snapshot(g));
-  const cleanQueue = socket => { for (const [key, value] of queue) if (value === socket.id) queue.delete(key); };
+  const broadcast = g => {
+    if (g.result) g.premoves = { w: [], b: [] };
+    for (const color of ['w', 'b']) {
+      const id = g.players[color]?.socketId;
+      if (id) io.to(id).emit('state', snapshot(g, color));
+    }
+  };
+  const cleanQueue = socket => queue.delete(socket.id);
   function seat(socket, g, c, name) {
     const token = randomBytes(24).toString('hex');
     g.players[c] = { name: String(name || 'Guest').trim().slice(0, 24) || 'Guest', token, socketId: socket.id };
@@ -44,8 +51,9 @@ export function createChessServer({ chooseColor = () => randomInt(2) === 0 ? 'w'
       return g;
     };
     action('create', d => {
+      const { minutes, increment } = validateTimeControl(d);
       available();
-      const g = createGame([3, 5, 10].includes(d.minutes) ? d.minutes : 5);
+      const g = createGame(minutes, increment);
       games.set(g.id, g);
       seat(socket, g, ['w', 'b'].includes(d.color) ? d.color : chooseColor(), d.name);
     });
@@ -57,15 +65,26 @@ export function createChessServer({ chooseColor = () => randomInt(2) === 0 ? 'w'
       available(); seat(socket, g, c, d.name);
     });
     action('quick', d => {
+      const control = validateTimeControl(d);
+      const preference = d.color === undefined ? 'random' : d.color;
+      if (!['random', 'w', 'b'].includes(preference)) throw new Error('Choose Random, White, or Black.');
+      const key = timeControlKey(control);
+      const opponentPreference = preference === 'random' ? 'random' : other(preference);
       available();
-      const minutes = [3, 5, 10].includes(d.minutes) ? d.minutes : 5;
-      const waiting = io.sockets.sockets.get(queue.get(minutes));
-      if (waiting && waiting.id !== socket.id) {
-        queue.delete(minutes);
-        const g = createGame(minutes); games.set(g.id, g);
-        const waitingColor = chooseColor();
-        seat(waiting, g, waitingColor, waiting.data.name); seat(socket, g, other(waitingColor), d.name);
-      } else { socket.data.name = d.name; queue.set(minutes, socket.id); socket.emit('queued'); }
+      // One entry per player preserves FIFO order even when several want the same color.
+      const match = [...queue].find(([id, entry]) =>
+        entry.key === key && entry.color === opponentPreference && io.sockets.sockets.has(id));
+      if (match) {
+        const [id, entry] = match;
+        const waiting = io.sockets.sockets.get(id);
+        queue.delete(id);
+        const g = createGame(control.minutes, control.increment); games.set(g.id, g);
+        const waitingColor = preference === 'random' ? chooseColor() : opponentPreference;
+        seat(waiting, g, waitingColor, entry.name); seat(socket, g, other(waitingColor), d.name);
+      } else {
+        queue.set(socket.id, { key, color: preference, name: d.name });
+        socket.emit('queued');
+      }
     });
     action('cancelQueue', () => cleanQueue(socket));
     action('resume', d => {
@@ -79,19 +98,27 @@ export function createChessServer({ chooseColor = () => randomInt(2) === 0 ? 'w'
       socket.emit('seated', { id: g.id, color: c, token: d.token }); broadcast(g);
     });
     action('leave', () => { const g = current(); if (!g.result) throw new Error('Finish or resign your game first.'); socket.leave(g.id); g.players[socket.data.color].socketId = null; socket.data.game = null; socket.data.color = null; });
-    action('move', d => { const g = current(); move(g, socket.data.color, d); broadcast(g); });
+    action('move', d => {
+      const g = current(), now = Date.now();
+      try {
+        move(g, socket.data.color, d, now);
+        runPremoves(g, now, color => io.to(g.players[color]?.socketId).emit('notice', 'Premove is no longer legal. Your remaining premoves were cleared.'));
+      } finally { broadcast(g); }
+    });
+    action('premove', d => { const g = current(); tick(g); try { queuePremove(g, socket.data.color, d); } finally { broadcast(g); } });
+    action('cancelPremoves', () => { const g = current(); g.premoves[socket.data.color] = []; broadcast(g); });
     action('resign', () => { const g = current(); tick(g); if (!g.result) g.result = g.lastTick ? `${colorName(other(socket.data.color))} wins by resignation` : 'Room closed'; broadcast(g); });
     action('draw', () => { const g = current(); tick(g); if (!g.lastTick || g.result) throw new Error('Game is not active.'); if (g.drawOffer === other(socket.data.color)) g.result = 'Draw by agreement'; else g.drawOffer = socket.data.color; broadcast(g); });
     socket.on('disconnect', () => {
       cleanQueue(socket);
       const g = games.get(socket.data.game);
-      if (g && g.players[socket.data.color]?.socketId === socket.id) { g.players[socket.data.color].socketId = null; g.updated = Date.now(); broadcast(g); }
+      if (g && g.players[socket.data.color]?.socketId === socket.id) { g.players[socket.data.color].socketId = null; g.premoves[socket.data.color] = []; g.updated = Date.now(); broadcast(g); }
     });
   });
   const timer = setInterval(() => {
     for (const [id, g] of games) {
       if (g.lastTick && !g.result) { tick(g); broadcast(g); }
-      if (Date.now() - g.updated > 3600000 && Object.values(g.players).every(p => !p.socketId)) games.delete(id);
+      if ((!g.lastTick || g.result) && Date.now() - g.updated > 3600000 && Object.values(g.players).every(p => !p.socketId)) games.delete(id);
     }
   }, 250);
   timer.unref();

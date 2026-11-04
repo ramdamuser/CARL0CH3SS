@@ -2,7 +2,7 @@
 export function soundForTransition(previous, next) {
   if (!previous || previous.id !== next.id) return null;
   if (next.result && !previous.result) return 'end';
-  if (next.history.length !== previous.history.length + 1) return null;
+  if (next.history.length <= previous.history.length) return null;
   if (next.check) return 'check';
   return next.lastMove?.captured ? 'capture' : 'move';
 }
