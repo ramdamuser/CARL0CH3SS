@@ -58,6 +58,15 @@ try {
   await clickText('Load PGN');
   await waitFor("document.querySelectorAll('.analysis-moves button').length === 4");
   assert.ok(await evaluate("document.querySelector('.analysis-heading p').textContent.includes('Ada vs Grace')"));
+  await clickText('Review game');
+  await waitFor("document.querySelectorAll('.review-count').length === 12");
+  assert.equal(await evaluate("document.querySelectorAll('.review-player-stats').length"), 2);
+  assert.ok(await evaluate("document.querySelector('.review-player-stats h3').textContent.includes('Ada')"));
+  assert.equal(await evaluate("document.querySelectorAll('.move-review-badge').length"), 4);
+  assert.ok(await evaluate("document.querySelector('.review-graph svg polyline').getAttribute('points').length > 0"));
+  await evaluate("(() => { const svg = document.querySelector('.review-graph svg'); const box = svg.getBoundingClientRect(); svg.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: box.left + box.width / 2 })); })()");
+  await waitFor("document.querySelector('.review-explanation')?.textContent.includes('1…e5')");
+  assert.ok(await evaluate("!!document.querySelector('.piece-review-symbol')"));
   await evaluate("document.querySelector('.analysis-moves button').click()");
   await waitFor("!!document.querySelector('[aria-label=\"e7 Black pawn\"]')");
   await evaluate("document.querySelector('[aria-label=\"c7 Black pawn\"]').click()");
@@ -74,6 +83,15 @@ try {
   await evaluate("document.querySelector('.engine-toggle input').click()");
   await waitFor("document.querySelector('.engine-score span')?.textContent === 'Analysis complete'");
   assert.ok(await evaluate("document.querySelector('.engine-line').textContent.length > 0"));
+  const blunderPgn = '1. f3 e5 2. g4 Qh4# 0-1';
+  await evaluate(`(() => {const field = document.querySelector('#analysis-pgn'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,${JSON.stringify(blunderPgn)});field.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await clickText('Load PGN');
+  await clickText('Review game');
+  await waitFor("document.querySelectorAll('.review-count').length === 12");
+  assert.ok(await evaluate("document.querySelectorAll('.review-graph-marker').length > 0"));
+  await evaluate("document.querySelector('.analysis-moves .review-blunder, .analysis-moves .review-mistake').closest('button').click()");
+  await waitFor("!!document.querySelector('.piece-review-symbol')");
+  assert.ok(await evaluate("document.querySelector('.review-explanation').textContent.includes('was stronger')"));
   const { data } = await call('Page.captureScreenshot', { format: 'png' }, sessionId);
   await writeFile('/tmp/carl-analysis-desktop.png', Buffer.from(data, 'base64'));
   await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, sessionId);
@@ -87,7 +105,7 @@ try {
   await waitFor("!!document.querySelector('.room-card')");
   assert.equal(await evaluate("[...document.querySelectorAll('nav button')].find(b=>b.textContent==='Analysis').disabled"), true);
   assert.deepEqual(errors, []);
-  console.log('PASS: real browser WASM search, best-move arrow, variation, PGN import, move navigation, engine toggle, mobile layout, and multiplayer analysis lock.');
+  console.log('PASS: real browser WASM search, full game review, best-move arrow, variation, PGN import, move navigation, engine toggle, mobile layout, and multiplayer analysis lock.');
   console.log('Screenshots: /tmp/carl-analysis-desktop.png and /tmp/carl-analysis-mobile.png');
 } finally {
   clearTimeout(timeout); ws?.close();
