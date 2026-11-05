@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, RotateCw, Upload, X } from 'lucide-react';
 import ChessPiece from './ChessPiece';
 import useStockfish from './useStockfish';
-import { readPgn, replay, branchMove, enginePosition, variationPgn, downloadPgn, MAX_PGN_BYTES } from './analysis';
+import { scrollHistoryItem } from './scrollHistory';
+import { readPgn, replay, branchMove, analysisMoveSound, enginePosition, variationPgn, downloadPgn, MAX_PGN_BYTES } from './analysis';
 
 const names = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
-export default function AnalysisBoard({ initialPgn, onClose }) {
+export default function AnalysisBoard({ initialPgn, onClose, onMoveSound }) {
   const [original, setOriginal] = useState(() => readPgn(initialPgn));
   const [line, setLine] = useState(() => original.moves);
   const [ply, setPly] = useState(() => original.moves.length);
@@ -13,7 +14,7 @@ export default function AnalysisBoard({ initialPgn, onClose }) {
   const [flipped, setFlipped] = useState(false), [dragging, setDragging] = useState(null);
   const [enabled, setEnabled] = useState(true), [depth, setDepth] = useState(16), [retry, setRetry] = useState(0);
   const [pgnText, setPgnText] = useState(''), [error, setError] = useState('');
-  const dragFrame = useRef(null), activeMove = useRef(null), input = useRef(null);
+  const dragFrame = useRef(null), activeMove = useRef(null), analysisMoves = useRef(null), input = useRef(null);
   const chess = useMemo(() => replay(original.initialFen, line.slice(0, ply)), [original.initialFen, line, ply]);
   const fen = chess.fen();
   const position = useMemo(() => enginePosition(original.initialFen, line.slice(0, ply)), [original.initialFen, line, ply]);
@@ -38,11 +39,12 @@ export default function AnalysisBoard({ initialPgn, onClose }) {
     window.addEventListener('dragend', stopDrag); window.addEventListener('drop', stopDrag);
     return () => { cancelAnimationFrame(dragFrame.current); window.removeEventListener('dragend', stopDrag); window.removeEventListener('drop', stopDrag); };
   }, []);
-  useEffect(() => { activeMove.current?.scrollIntoView({ block: 'nearest' }); }, [ply]);
+  useEffect(() => { scrollHistoryItem(analysisMoves.current, activeMove.current); }, [ply]);
   function play(from, to, promote) {
     try {
       const next = branchMove(original, line, ply, { from, to, promotion: promote });
       setLine(next.line); setPly(next.ply); setSelected(null); setPromotion(null); stopDrag();
+      onMoveSound?.(analysisMoveSound(original.initialFen, next.line, next.ply));
     } catch { setError('That move is not legal in this position.'); }
   }
   function attempt(from, to) {
@@ -92,7 +94,7 @@ export default function AnalysisBoard({ initialPgn, onClose }) {
       {isVariation && <button className="secondary return-game" onClick={returnToGame}>Return to game line</button>}
     </div><aside>
       <section className="panel engine-panel"><div className="panel-heading"><span className="eyebrow">STOCKFISH 19 · LITE</span><label className="engine-toggle"><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)}/> Engine</label></div><div className="engine-score"><strong>{scoreText}</strong><span>{terminal || { off: 'Engine off', loading: 'Loading engine…', searching: 'Analyzing…', ready: 'Analysis complete', error: 'Engine unavailable' }[engine.status]}</span></div><p className="muted">Positive favors White · Negative favors Black</p><div className="engine-settings"><label htmlFor="engine-depth">Target depth</label><select id="engine-depth" value={depth} onChange={e => setDepth(Number(e.target.value))}>{[12,16,20].map(d => <option key={d} value={d}>{d}</option>)}</select><span>Reached {info?.depth || '—'}</span></div><p className="time-help">Up to 2.5 seconds per position. Results are estimates.</p>{engine.error && <p role="alert">{engine.error} <button className="text-button" onClick={() => setRetry(retry + 1)}>Retry engine</button></p>}{best && <><h3>Suggested continuation</h3><p className="engine-line">{info.moves.map(m => m.san).join(' ')}</p><button className="secondary" onClick={() => play(best.from, best.to, best.promotion)}>Try {best.san}</button></>}<div className="engine-credits"><a href="https://github.com/nmrugg/stockfish.js/releases/tag/v19.0.1" target="_blank" rel="noreferrer">Stockfish.js</a> · <a href="/stockfish/COPYING.txt" target="_blank" rel="noreferrer">GPLv3</a> · <a href="/stockfish/stockfish.js-v19.0.1-source.tar.gz" download>Engine source</a></div></section>
-      <section className="panel analysis-history"><div className="moves-heading"><h3>{isVariation ? 'Variation' : 'Game moves'}</h3><span>{line.length} ply</span></div><div className="analysis-moves">{line.length ? line.map((san, index) => <button key={index} ref={ply === index + 1 ? activeMove : null} className={ply === index + 1 ? 'current' : ''} aria-current={ply === index + 1 ? 'step' : undefined} onClick={() => go(index + 1)}><small>{moveLabel(index)}</small> {san}</button>) : <p className="muted">Starting position. Make a move to explore.</p>}</div><div className="analysis-downloads"><button className="text-button" onClick={() => downloadPgn(original.pgn, 'carl0ch3ss-game.pgn')}><Download size={14}/> Game PGN</button>{isVariation && <button className="text-button" onClick={() => downloadPgn(variationPgn(original, line), 'carl0ch3ss-variation.pgn')}><Download size={14}/> Variation PGN</button>}</div></section>
+      <section className="panel analysis-history"><div className="moves-heading"><h3>{isVariation ? 'Variation' : 'Game moves'}</h3><span>{line.length} ply</span></div><div className="analysis-moves" ref={analysisMoves}>{line.length ? line.map((san, index) => <button key={index} ref={ply === index + 1 ? activeMove : null} className={ply === index + 1 ? 'current' : ''} aria-current={ply === index + 1 ? 'step' : undefined} onClick={() => go(index + 1)}><small>{moveLabel(index)}</small> {san}</button>) : <p className="muted">Starting position. Make a move to explore.</p>}</div><div className="analysis-downloads"><button className="text-button" onClick={() => downloadPgn(original.pgn, 'carl0ch3ss-game.pgn')}><Download size={14}/> Game PGN</button>{isVariation && <button className="text-button" onClick={() => downloadPgn(variationPgn(original, line), 'carl0ch3ss-variation.pgn')}><Download size={14}/> Variation PGN</button>}</div></section>
       <section className="panel pgn-panel"><h3>Import a game</h3><p className="muted">Paste PGN or open a file. Imports one game’s main line.</p><label className="field-label" htmlFor="analysis-pgn">PGN</label><textarea id="analysis-pgn" rows={5} maxLength={MAX_PGN_BYTES} value={pgnText} onChange={e => setPgnText(e.target.value)} placeholder={'[White "Player 1"]\n[Black "Player 2"]\n\n1. e4 e5 2. Nf3 Nc6 *'}/><div className="pgn-actions"><button className="primary" disabled={!pgnText.trim()} onClick={() => importPgn(pgnText)}>Load PGN</button><button className="secondary" onClick={() => input.current.click()}><Upload size={14}/> Open file</button></div><input hidden ref={input} type="file" accept=".pgn,.txt,application/x-chess-pgn,text/plain" onChange={e => { void importFile(e.target.files[0]); e.target.value = ''; }}/>{error && <p className="time-error" role="alert">{error}</p>}</section>
     </aside></div>
     {promotion && <div className="modal-backdrop"><section className="modal panel" role="dialog" aria-modal="true" aria-label="Choose analysis promotion"><button className="modal-close icon-button" aria-label="Cancel promotion" onClick={() => setPromotion(null)}><X size={20}/></button><h2>Choose your promotion.</h2><div className="promotion-options">{['q','r','b','n'].map(type => <button key={type} aria-label={`Promote to ${names[type]}`} onClick={() => play(promotion.from, promotion.to, type)}><ChessPiece type={type} color={chess.turn()}/><span>{names[type]}</span></button>)}</div></section></div>}

@@ -21,13 +21,15 @@ test('bundled Stockfish WASM loads and returns a legal best move through UCI', {
       output += data;
       if (output.includes('uciok') && !output.includes('STARTED_TEST')) {
         output += 'STARTED_TEST';
-        child.stdin.write('isready\nposition startpos moves e2e4\ngo depth 6\n');
+        child.stdin.write('setoption name UCI_LimitStrength value true\nsetoption name UCI_Elo value 1320\nisready\nposition startpos moves e2e4\ngo depth 6\n');
       }
       if (/bestmove [a-h][1-8][a-h][1-8]/.test(output)) resolve();
     });
     child.stdin.write('uci\n');
   });
   assert.match(output, /readyok/);
+  assert.match(output, /option name UCI_LimitStrength type check/);
+  assert.match(output, /option name UCI_Elo type spin default 1320 min 1320 max 3190/);
   assert.match(output, /info depth 6/);
   const { Chess } = await import('chess.js');
   const chess = new Chess(); chess.move('e4');

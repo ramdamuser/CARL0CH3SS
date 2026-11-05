@@ -27,6 +27,13 @@ export function replay(initialFen, moves) {
   for (const san of moves) chess.move(san);
   return chess;
 }
+export function analysisMoveSound(initialFen, moves, ply) {
+  if (!ply) return null;
+  const chess = replay(initialFen, moves.slice(0, ply));
+  if (chess.isGameOver()) return 'end';
+  if (chess.isCheck()) return 'check';
+  return chess.history({ verbose: true }).at(-1)?.captured ? 'capture' : 'move';
+}
 export function variationPgn(game, moves) {
   const chess = replay(game.initialFen, moves);
   for (const [key, value] of Object.entries(game.headers)) if (!['Result', 'SetUp', 'FEN'].includes(key)) chess.setHeader(key, escapeHeader(value));

@@ -50,7 +50,7 @@ carl0ch3ss/
 - **Create a private room** assigns the selected or random color. Copy the invite link or share the eight-character room code. Clocks begin when both players join.
 - Click a piece to reveal legal moves, then click a destination; desktop drag-and-drop also works. Promotion opens a queen/rook/bishop/knight selector.
 - Flip the board, follow SAN move history, offer/accept a draw, or resign. Check, checkmate, stalemate, insufficient material, repetition, and fifty-move draws are detected.
-- Before joining a room, the board is an **untimed local practice board**: control both sides. This is not a computer opponent.
+- Before joining a room, the board is an **untimed local practice board** where you control both sides. Choose **Play bot** to play Stockfish instead. Select White or Black before starting, choose Beginner, Casual, Club, or Expert difficulty, and adjust the difficulty during the game. Bot games are untimed and run locally in the browser.
 - A per-tab session token restores your seat after reconnecting or refreshing. Clocks continue while disconnected. Opening a seat in another tab transfers its connection.
 
 ## Socket contract

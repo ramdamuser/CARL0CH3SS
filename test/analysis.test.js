@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Chess } from 'chess.js';
-import { readPgn, replay, gameToPgn, variationPgn, branchMove, enginePosition, parseEngineInfo } from '../src/analysis.js';
+import { readPgn, replay, gameToPgn, variationPgn, branchMove, analysisMoveSound, enginePosition, parseEngineInfo } from '../src/analysis.js';
+
+test('analysis move sounds follow the played move without sounding for the starting position', () => {
+  const start = new Chess().fen();
+  assert.equal(analysisMoveSound(start, [], 0), null);
+  assert.equal(analysisMoveSound(start, ['e4'], 1), 'move');
+  assert.equal(analysisMoveSound(start, ['e4', 'd5', 'exd5'], 3), 'capture');
+  assert.equal(analysisMoveSound('4k3/8/8/8/8/8/8/R3K3 w - - 0 1', ['Ra8+'], 1), 'check');
+  assert.equal(analysisMoveSound(start, ['f3', 'e5', 'g4', 'Qh4#'], 4), 'end');
+});
 import { resultTag } from '../shared/pgn.js';
 import { createGame, snapshot } from '../server/game.js';
 

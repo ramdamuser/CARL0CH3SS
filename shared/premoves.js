@@ -5,6 +5,12 @@ export function projectedBoard(fen, moves = []) {
   for (const m of moves) {
     const piece = board.get(m.from);
     if (!piece) continue;
+    // Project an anticipated en passant capture as well as ordinary captures.
+    if (piece.type === 'p' && m.from[0] !== m.to[0] && !board.has(m.to) &&
+        m.from[1] === (piece.color === 'w' ? '5' : '4')) {
+      const capturedSquare = m.to[0] + m.from[1], captured = board.get(capturedSquare);
+      if (captured?.type === 'p' && captured.color !== piece.color) board.delete(capturedSquare);
+    }
     board.delete(m.from);
     board.set(m.to, { ...piece, square: m.to, type: m.promotion || piece.type });
     if (piece.type === 'k' && Math.abs(m.to.charCodeAt(0) - m.from.charCodeAt(0)) === 2) {
@@ -15,12 +21,13 @@ export function projectedBoard(fen, moves = []) {
   }
   return board;
 }
-// Premove planning checks shape/ownership, not check or blockers: the opponent's
-// future moves are unknown. Full chess.js legality is required at execution.
+// Chess.com-style planning uses movement geometry, not current occupancy,
+// blockers or check. A friendly destination may be captured by the opponent
+// before our recapture. Full legality is checked at execution.
 export function canPlan(board, color, from, to) {
   if (!/^[a-h][1-8]$/.test(from) || !/^[a-h][1-8]$/.test(to) || from === to) return false;
-  const p = board.get(from), target = board.get(to);
-  if (!p || p.color !== color || target?.color === color || target?.type === 'k') return false;
+  const p = board.get(from);
+  if (!p || p.color !== color) return false;
   const dx = Math.abs(to.charCodeAt(0) - from.charCodeAt(0)), dy = Number(to[1]) - Number(from[1]), ay = Math.abs(dy);
   switch (p.type) {
     case 'p': { const direction = color === 'w' ? 1 : -1; return (dy === direction && dx <= 1) || (dx === 0 && dy === direction * 2 && from[1] === (color === 'w' ? '2' : '7')); }
@@ -31,4 +38,9 @@ export function canPlan(board, color, from, to) {
     case 'k': return Math.max(dx, ay) === 1 || (from === (color === 'w' ? 'e1' : 'e8') && dy === 0 && dx === 2);
     default: return false;
   }
+}
+
+export function premoveDestinations(board, color, from) {
+  return Array.from({ length: 64 }, (_, i) => String.fromCharCode(97 + i % 8) + (1 + Math.floor(i / 8)))
+    .filter(to => canPlan(board, color, from, to));
 }
